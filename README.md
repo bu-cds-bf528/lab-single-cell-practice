@@ -35,6 +35,6 @@ By the end of this lab, you should be able to:
 
 | File | What it is |
 | --- | --- |
-| `seurat_practice_ifnb.Rmd` | The lab. Work through it in order. |
-| `checkpoint_counts.md` | Values you compute in Part 2. Fill in the table. |
-| `decision_record.md` | Your choices and thresholds. Fill it in as you go. |
+| `seurat_practice_ifnb.Rmd` | A basic seurat workflow |
+| `checkpoint_counts.md` | Fill in the table with various subsetted values |
+| `decision_record.md` | Your choices and thresholds |
