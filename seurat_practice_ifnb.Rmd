@@ -24,7 +24,6 @@ assigned.
 Here we load Seurat, and set a random seed.
 ```{r libraries}
 library(Seurat)
-library(SeuratData)
 library(dplyr)
 library(tidyverse)
 library(devtools)
