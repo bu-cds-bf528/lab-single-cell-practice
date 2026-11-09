@@ -1,0 +1,655 @@
+---
+title: "Seurat Practice Lab: ifnb"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    df_print: paged
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, fig.width = 8, fig.height = 5)
+```
+
+# Overview
+
+This lab is practice with Seurat itself. Later labs will rely on you knowing
+how to manipulate and interact with the Seurat object.
+
+**Dataset.** `ifnb` from the SeuratData package: human peripheral blood
+mononuclear cells (PBMCs), half left untreated and half stimulated with
+interferon-beta (IFN-β). The object comes with cell-type labels already
+assigned.
+
+Here we load Seurat, and set a random seed.
+```{r libraries}
+library(Seurat)
+library(SeuratData)
+library(dplyr)
+library(tidyverse)
+library(devtools)
+set.seed(42)
+```
+
+# Part 0: Research the background biology (15-20 minutes)
+
+Before you get started, do a little bit of research on what to expect:
+
+1. Which cell types are found in PBMCs and in what rough proportions?
+
+2. What does interferon-beta do to immune cells? Find 3-4 genes that are
+expected to respond to this stimulus. 
+
+
+Find a few papers that support your answers to the above.
+
+
+# Part 1: Load the data and explore the object
+
+```{r load}
+devtools::install_github('satijalab/seurat-data')   # run once
+InstallData("ifnb")                                  # run once
+data("ifnb")
+```
+
+`UpdateSeuratObject()` converts the stored object to the version of Seurat
+installed for this course. Run it even if loading appears to work.
+
+```{r update-object}
+ifnb <- UpdateSeuratObject(ifnb)
+```
+
+Convert the RNA assay to the current (v5) format, so layers behave the way they
+will in later labs.
+
+```{r convert-assay}
+ifnb[["RNA"]] <- as(ifnb[["RNA"]], Class = "Assay5")
+```
+
+This will be the object you will most likely be working with when performing
+single cell RNAseq data. If you work in a different ecosystem (python), you will
+see different solutions (`annData`) that all attempt to solve the same goal of 
+holding annotation information, counts, and all other analyses from the scRNAseq
+workflow in a single object. 
+
+Printing the object gives a short summary:
+
+```{r print-object}
+ifnb
+```
+
+A Seurat object holds several kinds of information about the same cells. These
+functions let you look at each one:
+
+| Function | What it returns |
+| --- | --- |
+| `ncol()`, `nrow()` | Number of cells (columns) and genes (rows) |
+| `Cells()`, `Features()` | Cell barcodes and gene names |
+| `Assays()` | The assays stored, for example `RNA` |
+| `Layers()` | The layers in the active assay: `counts` (raw), `data` (normalized), `scale.data` (scaled) |
+| `ifnb@meta.data` | The metadata: a data frame with one row per cell |
+| `Reductions()` | Stored dimensional reductions, such as PCA or UMAP |
+| `Idents()` | Each cell's current identity, used by many plotting and subsetting functions |
+
+How many cells and genes are in the object?
+
+```{r n-cells-genes}
+ncol(ifnb)
+nrow(ifnb)
+```
+
+A few cell barcodes and gene names:
+
+```{r cells-features}
+head(Cells(ifnb))
+head(Features(ifnb))
+```
+
+Which assays does it contain?
+
+```{r assays}
+Assays(ifnb)
+```
+
+Which layers does the RNA assay contain?
+
+```{r layers}
+Layers(ifnb)
+```
+
+What columns are in the metadata right now?
+
+```{r metadata-columns}
+colnames(ifnb@meta.data)
+```
+
+Are any reductions (PCA, UMAP) already stored?
+
+```{r reductions}
+Reductions(ifnb)
+```
+
+What are the cells' identities right now?
+
+```{r idents}
+head(Idents(ifnb))
+```
+
+# Part 2: Work with metadata
+
+The metadata is a data frame with one row per cell. Anything you can compute
+about a cell can be stored there and used to subset, group, or color plots.
+
+## 2a. Inspect it
+
+```{r metadata-head}
+head(ifnb@meta.data)
+```
+
+There are three ways to pull a metadata column.
+
+```{r access-dollar}
+# A character vector
+ifnb$stim
+```
+
+```{r access-brackets}
+# a dataframe
+ifnb[["stim"]]
+```
+
+```{r access-slot}
+# a character vector
+ifnb@meta.data$stim
+```
+
+Use $ for everyday work, like reading a column (ifnb$stim) or adding one 
+(ifnb$group <- ...). It returns a plain vector that works with table(), mean(),
+and comparisons. Use [[ ]] when the column name is stored in a variable 
+(ifnb[[cluster_col]]) or when you want several columns at once. It returns a 
+data frame with cell barcodes as row names, so add drop = TRUE if you need a 
+vector.
+
+The `table` counts or tabulates categorical data.
+
+Cells per condition by accessing the `stim` column:
+
+```{r table-stim}
+table(ifnb$stim)
+```
+
+Cells per cell type accessing the `seurat_annotations` column:
+
+```{r table-celltype}
+table(ifnb$seurat_annotations)
+```
+
+Cell type by condition, table can be passed two variables on which to group and
+count by:
+
+```{r table-celltype-stim}
+table(ifnb$seurat_annotations, ifnb$stim)
+```
+
+
+The number and names of cell clusters is the unique number of `seurat_annotations`
+
+```{r}
+# Names of clusters
+unique(ifnb$seurat_annotations)
+```
+
+The total number of cluster annotations
+```{r}
+length(unique(ifnb$seurat_annotations))
+```
+
+## 2b. Add columns
+
+You add a column to the metadata the same way you add one to a data frame:
+`ifnb$new_column <- values`, with one value per cell, in the same order as
+`Cells(ifnb)`. 
+
+Seurat also has helpers that compute per-cell values for you,
+such as `PercentageFeatureSet()`, which gives the percentage of each cell's
+counts that come from genes matching a pattern. Seurat built-in functions will be
+the most common way of updating the metadata. 
+
+**1. Percentage of counts from ribosomal genes.** What pattern matches
+ribosomal gene names in human data? Check what it matched before using it.
+
+"^RP[SL]" matches gene names that start with “RPS” or “RPL”, the two families
+of ribosomal protein genes (small and large subunit). The ^ anchors the match
+to the start of the name, RP matches those two letters literally, and [SL]
+matches exactly one character, either S or L. Note that a few unrelated genes
+will be caught by this pattern, which for now, we will ignore. 
+
+```{r ribo-pattern}
+ribo_pattern <- "^RP[SL]"
+grep(ribo_pattern, rownames(ifnb), value = TRUE)
+```
+
+Call the PercentageFeatureSet function:
+```{r percent-ribo}
+ifnb[["percent.ribo"]] <- PercentageFeatureSet(ifnb, pattern = ribo_pattern)
+```
+
+
+Inspect what the function added to the metadata
+```{r metadata}
+ifnb@meta.data
+```
+
+
+**2. Adding a new column** This will return `TRUE` for CD14 and CD16 monocytes, `FALSE` otherwise. 
+This will create a new column in your metadata that is a manual cluster of two 
+subtypes of monocytes that you've defined. You can manually add columns to this
+metadata to help group your data in more flexible ways. 
+
+```{r is-monocyte}
+ifnb$is_monocyte <- ifnb$seurat_annotations %in% c("CD14 Mono", "CD16 Mono")
+```
+
+**3. Concatenating together multiple columns** Cell type and condition combined
+into one label, for example `CD14 Mono_STIM`. You can also concatenate multiple
+columns together to generate new labels or groupings. 
+
+```{r group-column}
+ifnb$group <- paste(ifnb$seurat_annotations, ifnb$stim, sep = "_")
+```
+
+You can see these two changes by accessing the `ifnb@meta.data`
+
+## 2c. Subset and confirm
+
+`subset()` keeps the cells that meet a condition written in terms of metadata
+columns (or gene expression).
+
+**Example 1: stimulated cells only.**
+
+```{r subset-stim}
+# The expression being evaluated is the stim column having the STIM value
+stim_only <- subset(ifnb, subset = stim == "STIM")
+ncol(stim_only)
+```
+
+**Example 2: CD14 monocytes from control cells only.** Conditions on two
+columns are combined with `&`. The expected number is one cell of the cell type
+by condition table.
+
+```{r subset-cd14-ctrl}
+cd14_ctrl <- subset(ifnb, subset = seurat_annotations == "CD14 Mono" & stim == "CTRL")
+ncol(cd14_ctrl)
+```
+
+You can use the code block below to calculate some of these as needed:
+```{r}
+
+
+```
+
+## 2d. Calculate these values
+
+| # | Quantity | Your value |
+| --- | --- | --- |
+| 1 | Total cells | |
+| 2 | Total genes | |
+| 3 | Control (`CTRL`) cells | |
+| 4 | Distinct cell-type labels | |
+| 5 | Genes matched by the ribosomal pattern | |
+| 6 | Median `percent.ribo`, to 2 decimal places | |
+| 7 | CD14 monocytes, both conditions | |
+| 8 | All monocytes (using the `is_monocyte` column) | |
+| 9 | T cells (`CD4 Naive T`, `CD4 Memory T`, `CD8 T`, `T activated`), subset by identity | |
+| 10 | Cells with more than 1,000 genes detected | |
+| 11 | Stimulated CD14 monocytes with more than 1,000 genes | |
+
+
+## 2e. Split and merge
+
+Later labs combine several samples into one object. Practice here by taking
+ifnb apart and putting it back together.
+
+**Split** into a control object and a stimulated object:
+
+```{r split}
+ctrl_obj <- subset(ifnb, subset = stim == "CTRL")
+stim_obj <- subset(ifnb, subset = stim == "STIM")
+ncol(ctrl_obj)
+ncol(stim_obj)
+```
+
+**Merge** them back together. The merged object should have as many cells as
+the original (row 1 of your table).
+
+```{r merge}
+merged <- merge(ctrl_obj, y = stim_obj)
+ncol(merged)
+```
+
+Are the barcodes the same as the original, in any order?
+
+```{r compare-barcodes}
+setequal(Cells(merged), Cells(ifnb))
+```
+
+Compare the layers before and after merging:
+
+```{r layers-original}
+Layers(ifnb)
+```
+
+```{r layers-merged}
+Layers(merged)
+```
+
+`merge()` keeps each object's data in its own layer: `counts.1` and `data.1`
+come from the control object, `counts.2` and `data.2` from the stimulated one.
+This is useful when you want to process or integrate samples separately. To
+combine them into a single `counts` layer, use `JoinLayers()`:
+
+```{r}
+merged <- JoinLayers(merged)
+Layers(merged)
+```
+
+# Part 3: The standard workflow
+
+Set your choices here as you work through this part. Each value goes in the
+decision log at the end of this part. Change these to what you choose to use.
+You may use the default values. 
+
+```{r choices}
+n_variable_genes <- NA number of variable genes to keep
+n_pcs            <- NA   # number of PCs to use downstream (set after 3c)
+clust_resolution <- NA
+```
+
+## 3a. Quality control
+
+```{r qc-violin}
+VlnPlot(ifnb, features = c("nFeature_RNA", "nCount_RNA", "percent.ribo"),
+        group.by = "stim", pt.size = 0, ncol = 3)
+```
+
+```{r qc-scatter}
+FeatureScatter(ifnb, feature1 = "nCount_RNA", feature2 = "nFeature_RNA",
+               group.by = "stim")
+```
+
+This is normally where you would filter but this particular dataset has already
+been filtered. We will look at filtering in a future lab with different data. 
+
+## 3b. Normalize, find variable genes, and scale
+
+**Normalize**
+
+```{r normalize}
+ifnb <- NormalizeData(ifnb)
+Layers(ifnb)
+```
+
+**Find variable genes**
+
+```{r variable-features}
+ifnb <- FindVariableFeatures(ifnb, nfeatures = n_variable_genes)
+head(VariableFeatures(ifnb), 10)
+```
+
+
+## 3c. PCA
+
+Seurat requires the data to be scaled
+```{r run-pca}
+ifnb <- ScaleData(ifnb)
+ifnb <- RunPCA(ifnb, npcs = 50, verbose = FALSE)
+```
+
+```{r elbow}
+ElbowPlot(ifnb, ndims = 50)
+```
+
+
+## 3d. Neighbors, clusters, and UMAP
+
+**Find neighbors**
+
+```{r neighbors}
+ifnb <- FindNeighbors(ifnb, dims = 1:n_pcs)
+```
+
+**Find clusters**
+
+```{r clusters}
+ifnb <- FindClusters(ifnb, resolution = clust_resolution)
+```
+
+**Run UMAP**
+
+```{r umap}
+ifnb <- RunUMAP(ifnb, dims = 1:n_pcs)
+```
+
+`FindClusters()` added one column per resolution. Which columns are new?
+
+```{r new-columns}
+colnames(ifnb@meta.data)
+```
+
+How many clusters resulting from FindClusters?
+
+```{r n-clusters}
+
+```
+
+
+```{r plot-clusters}
+DimPlot(ifnb, label = TRUE)
+```
+
+
+# Part 4: Use metadata with your results
+
+## 4a. Color by metadata
+
+
+```{r umap-stim}
+DimPlot(ifnb, group.by = "stim")
+```
+
+```{r umap-split-stim, fig.width = 10}
+DimPlot(ifnb, split.by = "stim", label = TRUE)
+```
+
+
+## 4b. Find markers and name your clusters
+
+**Find markers for every cluster.**
+
+```{r find-all-markers}
+markers <- FindAllMarkers(ifnb,
+                          min.pct = 0.25,
+                          logfc.threshold = 0.5,
+                          max.cells.per.ident = 500)
+```
+
+**Top 5 markers per cluster by fold change**
+
+```{r top-markers}
+top_markers <- markers |>
+  group_by(cluster) |>
+  slice_max(avg_log2FC, n = 5)
+top_markers
+```
+
+**Canonical markers.** 
+
+```{r canonical-markers}
+canonical <- c("CD14", "FCGR3A", "MS4A1", "CD3E", "CD8A", "GNLY", "PPBP")
+```
+
+```{r dotplot, fig.width = 10}
+DotPlot(ifnb, features = canonical) + RotatedAxis()
+```
+
+```{r featureplot, fig.width = 10}
+FeaturePlot(ifnb, features = canonical[1:4])
+```
+
+```{r violin}
+VlnPlot(ifnb, features=canonical[1:2])
+```
+
+
+**YOU DO NOT HAVE TO DO THIS**
+
+If you were annotating your clusters by hand, you'd make plots like the ones
+above and decide which marker genes indicate which cell types. You'd then
+record those decisions in R as a named vector, made with `c()`. Each name is a
+cluster ID, exactly as it appears in `levels(Idents(ifnb))`, and each value is
+the cell-type label you've assigned to that cluster.
+
+These are fake cluster names artificially generated just to illustrate how you'd
+do it.
+
+```{r new-names}
+new_names <- c(
+  "0"  = "new_label_0",
+  "1"  = "new_label_1",
+  "2"  = "new_label_2",
+  "3"  = "new_label_3",
+  "4"  = "new_label_4",
+  "5"  = "new_label_5",
+  "6"  = "new_label_6",
+  "7"  = "new_label_7",
+  "8"  = "new_label_8",
+  "9"  = "new_label_9",
+  "10" = "new_label_10",
+  "11" = "new_label_11",
+  "12" = "new_label_12",
+  "13" = "new_label_13",
+  "14" = "new_label_14",
+  "15" = "new_label_15",
+  "16" = "new_label_16",
+  "17" = "new_label_17",
+  "18" = "new_label_18",
+  "19" = "new_label_19"
+)
+```
+
+
+This would rename your idents to your new manual clusters
+```{r rename-idents}
+ifnb <- RenameIdents(ifnb, new_names)
+ifnb$my_labels <- Idents(ifnb)
+```
+
+```{r umap-my-labels}
+DimPlot(ifnb, label = TRUE, repel = TRUE) + NoLegend()
+```
+
+You can see that nearly every function we called updated the metadata with
+it's calculation or result. 
+
+```{r final-metadata}
+colnames(ifnb@meta.data)
+```
+
+## 5. Using Clustree to determine cluster resolution
+
+[Clustree](https://lazappi.github.io/clustree/articles/clustree.html#clustering-trees-for-scrna-seq-data)
+
+Clustering resolution controls how many clusters you get: higher values split
+cells into more, smaller clusters. There's no single correct value, and we can 
+employ a very common bioinformatics strategy to perform a sweep over many possible
+values and see which make sense. 
+
+First, cluster at several resolutions. Try to choose values both below and above
+the default resolution of 0.8. Each one adds a column to the metadata
+(`RNA_snn_res.0.2`, `RNA_snn_res.0.4`, and so on).
+
+```{r clusters-multi}
+
+```
+
+Then plot them as a clustering tree:
+
+```{r clustree, fig.height = 8}
+library(clustree)
+clustree(ifnb, prefix = "RNA_snn_res.")
+```
+
+**How to read the tree**
+
+- **Each row is one resolution,** lowest at the top.
+- **Each circle is a cluster.** Its size shows how many cells it contains.
+- **Arrows show where cells go** as resolution increases. A darker, more opaque
+  arrow means a larger share of the lower cluster's cells came from that parent.
+- **A cluster with one strong arrow coming in and one going out is stable:** it
+  stays the same group of cells across resolutions.
+- **A cluster that splits into two or more** is being divided. That split may be
+  real biology, such as two subtypes, or it may be over-clustering.
+- **Many faint arrows crossing between branches** mean cells are being shuffled
+  between clusters. Clusters in that region are unstable, and a resolution there
+  is probably too high.
+
+**Questions**
+
+- Which, if any, clusters stay stable across every resolution?
+
+- At what resolution do clusters start splitting into many small pieces, or
+  cells start moving between branches?
+  
+- How many cell types did you expect in Part 0? Which resolution gives roughly
+  that number? Where it gives more, are the extra clusters real subtypes, a
+  split by condition, or over-clustering?
+  
+- The dataset comes with cell-type labels (`seurat_annotations`). Use them to
+  check your choice: at the resolution you're considering, does each cluster
+  contain mostly one cell type, or are some cell types split across several
+  clusters? A table of clusters against labels will show you, for example
+  `table(ifnb$RNA_snn_res.0.8, ifnb$seurat_annotations)`.
+
+- Remember we have cell labels which can aid you in this.
+
+`FindClusters()` sets the cells' identities to the last resolution it ran
+(1.2 here). Set them to the resolution you chose before moving on:
+
+```{r set-resolution}
+Idents(ifnb) <- "RNA_snn_res.0.8"   # replace with your chosen resolution
+```
+
+Color the tree by a marker gene's average expression to see at
+which resolution a cell type first separates out:
+
+```{r clustree-gene, fig.height = 8}
+clustree(ifnb, prefix = "RNA_snn_res.", node_colour = "CD14", node_colour_aggr = "mean")
+```
+
+You can do this for other prominent marker genes to visualize cluster stability.
+
+Try a few markers for different cell types, for example `CD14` (monocytes),
+`MS4A1` (B cells), `CD3E` (T cells), and `GNLY` (NK cells). Do they all separate
+at the same resolution?
+
+
+You can also cluster by any numeric metadata column. Here we color by how many
+cells are stimulated within a cluster. 
+```{r clustree-stim, fig.height = 8}
+ifnb$is_stim <- as.numeric(ifnb$stim == "STIM")
+clustree(ifnb, prefix = "RNA_snn_res.", node_colour = "is_stim", node_colour_aggr = "mean") +
+  ggplot2::labs(colour = "Fraction stimulated")
+```
+
+A cluster near 0 or 1 indicate that they are entirely comprised of control
+or stimulated cells, respectively. 
+
+## 6. Reporting your computational environment
+
+This is normally how people report their R computational environment. It is much
+less ideal than solution's we've already discussed, but R package management
+is very cumbersome. 
+
+```{r session-info}
+sessionInfo()
+```
