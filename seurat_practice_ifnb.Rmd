@@ -47,6 +47,7 @@ Find a few papers that support your answers to the above.
 
 ```{r load}
 devtools::install_github('satijalab/seurat-data')   # run once
+library(SeuratData)
 InstallData("ifnb")                                  # run once
 data("ifnb")
 ```
