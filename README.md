@@ -1,6 +1,6 @@
 # Lab 0: Seurat Practice (ifnb)
 
-This lab is practice with Seurat itself.  Every later lab assumes you can do the
+This lab is practice with Seurat and the later labs assume you can do the
 things below.
 
 **Dataset:** `ifnb` from SeuratData. Human PBMCs, half untreated and half
